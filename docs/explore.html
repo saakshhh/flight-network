@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flight network explorer</title>
+<meta name="description" content="Explore 19,239 nonstop air routes: any airport's connections, any airline's network, and the fastest itinerary between two airports.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="assets/network.js"></script>
+<script src="assets/common.js"></script>
+<style>
+  body { overflow: hidden; }
+  .app { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 45px); }
+  @media (max-width: 860px) { body { overflow: auto; } .app { grid-template-columns: 1fr; height: auto; }
+    .mapbox { height: 62vh !important; order: -1; } }
+  aside { border-right: 1px solid var(--border); padding: 16px 18px 24px; overflow-y: auto; font-size: 14px; }
+  aside h2 { font: 700 13px/1.4 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--text-muted); margin: 18px 0 8px; max-width: none; }
+  aside h2:first-child { margin-top: 0; }
+  aside label { display: block; color: var(--text-secondary); margin: 8px 0 4px; }
+  aside input, aside select { width: 100%; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .row .btn { flex: 0 0 auto; }
+  .mapbox { border-radius: 0; border: 0; height: 100%; }
+  #info { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+  #info h3 { font-size: 17px; margin: 0 0 2px; }
+  #info .sub { color: var(--text-muted); margin: 0 0 10px; }
+  #info dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0 0 12px; }
+  #info dt { color: var(--text-muted); }
+  #info dd { margin: 0; font-weight: 600; }
+  #info ol { padding-left: 20px; margin: 4px 0 12px; }
+  #info li { margin: 2px 0; }
+  #info a { cursor: pointer; text-decoration: none; }
+  .leg { border-left: 3px solid var(--highlight); padding: 2px 0 2px 10px; margin: 8px 0; }
+  .leg .air { color: var(--text-muted); font-size: 13px; }
+  .muted { color: var(--text-muted); }
+  .clear { float: right; font-size: 13px; }
+  .maplegend { position: absolute; left: 12px; bottom: 10px; background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--text-secondary); }
+  .maplegend .legend { margin: 0; gap: 10px; }
+  .zoombtns { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .zoombtns button { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 18px; cursor: pointer; }
+</style>
+</head>
+<body>
+<nav class="top"><div class="inner">
+  <a class="brand" href="index.html">Flight network</a>
+  <a href="index.html" class="hide-sm">Story</a>
+  <a href="explore.html" aria-current="page">Explorer</a>
+  <a href="https://github.com/saakshhh/flight-network">GitHub</a>
+</div></nav>
+
+<div class="app">
+  <aside>
+    <h2>Airport</h2>
+    <input type="search" id="airport" list="airport-list" placeholder="Code or city, e.g. ANC or Tokyo">
+    <datalist id="airport-list"></datalist>
+
+    <h2>Airline</h2>
+    <select id="airline"><option value="-1">All airlines</option></select>
+
+    <h2>Fastest itinerary</h2>
+    <div class="row"><input type="search" id="from" list="airport-list" placeholder="From"></div>
+    <div class="row" style="margin-top:6px"><input type="search" id="to" list="airport-list" placeholder="To">
+      <button class="btn" id="go">Find</button></div>
+    <p class="muted" style="margin:6px 0 0;font-size:13px">Fewest flights, then fewest kilometres. Any airlines.</p>
+
+    <h2>Display</h2>
+    <label for="minair">Routes sold by at least <b id="minair-v">1</b> airline(s)</label>
+    <input type="range" id="minair" min="1" max="10" value="1">
+    <label>Color airports by</label>
+    <div class="chips" id="colorby">
+      <button data-mode="continent" aria-pressed="true">Continent</button>
+      <button data-mode="hops" aria-pressed="false">Flights from selected</button>
+    </div>
+
+    <div id="info"></div>
+  </aside>
+  <div class="mapbox" id="map">
+    <canvas></canvas>
+    <div class="tooltip"></div>
+    <div class="zoombtns"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button>
+      <button id="zreset" aria-label="Reset view" style="font-size:13px">⟲</button></div>
+    <div class="maplegend"><div class="legend" id="maplegend"></div></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const F = window.Flight, A = F.A, P = F.P, AL = F.N.airlines;
+  const box = document.getElementById('map'), canvas = box.querySelector('canvas'), ctx = canvas.getContext('2d');
+  const tip = box.querySelector('.tooltip'), info = document.getElementById('info');
+  const projection = d3.geoEqualEarth().precision(0.05), geo = d3.geoPath(projection);  // fine resampling: stays smooth when zoomed
+  const state = { airport: -1, airline: -1, path: null, minAir: 1, color: 'continent' };
+  let w, h, t = d3.zoomIdentity, xy = [], tree, routePaths = [], land, dist = null;
+
+  // per-airline route lists and airport counts
+  const airlineEdges = AL.code.map(() => []);
+  for (let e = 0; e < F.m; e++) for (const j of P.al[e]) airlineEdges[j].push(e);
+  const select = document.getElementById('airline');
+  d3.range(AL.code.length).filter(j => airlineEdges[j].length > 0)
+    .sort((x, y) => airlineEdges[y].length - airlineEdges[x].length)
+    .forEach(j => select.add(new Option(`${AL.name[j]} (${AL.code[j]}) · ${airlineEdges[j].length} routes`, j)));
+  F.airportOptions(document.getElementById('airport-list'));
+
+  // ---- geometry, cached as Path2D so zooming only re-strokes ------------------------
+  function layout() {
+    const r = box.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    w = r.width; h = r.height;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    projection.fitExtent([[10, 10], [w - 10, h - 10]], F.frame);
+    xy = A.lon.map((lon, i) => projection([lon, A.lat[i]]));
+    tree = d3.quadtree(d3.range(F.n), i => xy[i][0], i => xy[i][1]);
+    land = new Path2D(geo(F.N.world));
+    routePaths = new Array(F.m);  // built lazily
+    draw();
+  }
+  function routePath(e) {
+    if (!routePaths[e]) {
+      routePaths[e] = new Path2D(geo({ type: 'LineString',
+        coordinates: [[A.lon[P.a[e]], A.lat[P.a[e]]], [A.lon[P.b[e]], A.lat[P.b[e]]]] }) || '');
+    }
+    return routePaths[e];
+  }
+
+  // ---- what to show -----------------------------------------------------------------
+  function shownEdges() {
+    let edges;
+    if (state.airline >= 0) edges = airlineEdges[state.airline];
+    else edges = d3.range(F.m);
+    if (state.airport >= 0) edges = edges.filter(e => P.a[e] === state.airport || P.b[e] === state.airport);
+    return edges.filter(e => P.n[e] >= state.minAir);
+  }
+
+  function hexA(hex, a) {
+    const v = parseInt(hex.slice(1), 16);
+    return `rgba(${v >> 16},${(v >> 8) & 255},${v & 255},${a})`;
+  }
+
+  function strokeBuckets(edges, color, alphaFor, widthFor) {
+    const buckets = new Map();
+    for (const e of edges) {
+      const k = Math.min(P.n[e], 10);
+      if (!buckets.has(k)) buckets.set(k, new Path2D());
+      buckets.get(k).addPath(routePath(e));
+    }
+    [...buckets.keys()].sort((x, y) => x - y).forEach(k => {
+      ctx.strokeStyle = color(k, alphaFor(k)); ctx.lineWidth = widthFor(k) / t.k; ctx.stroke(buckets.get(k));
+    });
+  }
+
+  function draw(fast) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.translate(t.x, t.y); ctx.scale(t.k, t.k);
+    ctx.fillStyle = F.css('--land'); ctx.fill(land);
+    ctx.strokeStyle = F.css('--coast'); ctx.lineWidth = 0.4 / t.k; ctx.stroke(land);
+
+    const rgb = F.css('--route'), hi = F.css('--highlight');
+    const focus = state.airport >= 0 || state.airline >= 0 || state.path;
+    let edges = shownEdges();
+    if (fast && edges.length > 4000) edges = edges.filter(e => P.n[e] >= 3);
+    const many = edges.length > 3000;
+    if (state.path) {
+      strokeBuckets(edges, (k, a) => `rgba(${rgb},${a})`, () => 0.12, () => 0.5);
+      ctx.strokeStyle = hi; ctx.lineWidth = 2.6 / t.k;
+      state.path.edges.forEach(e => ctx.stroke(routePath(e)));
+    } else {
+      strokeBuckets(edges, state.airport >= 0 ? (k, a) => hexA(hi, Math.min(1, a + 0.25)) : (k, a) => `rgba(${rgb},${a})`,
+        k => many ? 0.18 + k * 0.05 : 0.45 + k * 0.05, k => (many ? 0.3 : 0.6) + k * 0.13);
+    }
+
+    // airports: those on shown routes (or everything faintly when nothing is focused)
+    const on = new Uint8Array(F.n);
+    for (const e of edges) { on[P.a[e]] = 1; on[P.b[e]] = 1; }
+    if (state.path) state.path.nodes.forEach(i => { on[i] = 2; });
+    if (state.airport >= 0) on[state.airport] = 2;
+    const everyAirport = state.color === 'hops' && dist;
+    const order = d3.range(F.n).filter(i => on[i] || everyAirport).sort((x, y) => A.deg[y] - A.deg[x]);
+    const rk = Math.sqrt(t.k);
+    for (const i of order) {
+      ctx.beginPath(); ctx.arc(xy[i][0], xy[i][1], Math.max(1.2, F.radius(A.deg[i])) / rk, 0, 2 * Math.PI);
+      ctx.fillStyle = state.color === 'hops' && dist ? F.hopColor(dist[i]) : (F.N.continentColors[A.cont[i]] || '#888');
+      ctx.fill();
+      if (on[i] === 2) { ctx.strokeStyle = hi; ctx.lineWidth = 2 / t.k; ctx.stroke(); }
+      else if (A.deg[i] > 30) { ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 0.5 / t.k; ctx.stroke(); }
+    }
+    // labels for the path / selected airport
+    const labelled = state.path ? state.path.nodes : state.airport >= 0 ? [state.airport] : [];
+    ctx.font = `600 ${12 / t.k}px system-ui, sans-serif`; ctx.fillStyle = F.css('--text-primary');
+    ctx.strokeStyle = F.css('--surface-1'); ctx.lineWidth = 3 / t.k; ctx.lineJoin = 'round';
+    for (const i of labelled) {
+      const x = xy[i][0] + 6 / t.k, y = xy[i][1] - 6 / t.k;
+      ctx.strokeText(A.code[i], x, y); ctx.fillText(A.code[i], x, y);
+    }
+    drawLegend();
+  }
+
+  function drawLegend() {
+    const el = document.getElementById('maplegend');
+    if (state.color === 'hops' && dist) {
+      el.innerHTML = ['origin', '1', '2', '3', '4', '5+ flights'].map((s, k) =>
+        `<span><i style="background:${F.hopColor(k)}"></i>${s}</span>`).join('');
+    } else {
+      el.innerHTML = F.N.continents.map((c, k) => `<span><i style="background:${F.N.continentColors[k]}"></i>${c}</span>`).join('');
+    }
+  }
+
+  // ---- side panel -------------------------------------------------------------------
+  const link = i => `<a data-airport="${i}">${F.label(i)}</a>`;
+  function rankOf(arr, i) { let r = 1; for (let k = 0; k < arr.length; k++) if (arr[k] > arr[i]) r++; return r; }
+
+  function renderInfo() {
+    let html = '';
+    if (state.path) {
+      const p = state.path;
+      html += `<a class="clear" data-clear="path">clear</a><h3>${A.code[p.nodes[0]]} → ${A.code[p.nodes.at(-1)]}</h3>
+        <p class="sub">${p.edges.length} flight${p.edges.length > 1 ? 's' : ''} · ${F.fmt.format(Math.round(p.km))} km flown</p>`;
+      p.edges.forEach((e, k) => {
+        const names = F.airlineNames(e);
+        html += `<div class="leg">${link(p.nodes[k])} → ${link(p.nodes[k + 1])}<br>
+          <span class="air">${F.fmt.format(P.km[e])} km · ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` +${names.length - 3}` : ''}</span></div>`;
+      });
+    } else if (state.airport >= 0) {
+      const i = state.airport, edges = shownEdges();
+      const reach = [0, 0, 0];
+      dist = F.bfs(i);
+      for (let k = 0; k < F.n; k++) if (dist[k] >= 1 && dist[k] <= 3) reach[dist[k] - 1]++;
+      const top = edges.slice().sort((x, y) => P.n[y] - P.n[x] || P.km[y] - P.km[x]).slice(0, 12);
+      html += `<a class="clear" data-clear="airport">clear</a><h3>${A.name[i]} (${A.code[i]})</h3><p class="sub">${F.place(i)}</p>
+        <dl><dt>Nonstop destinations</dt><dd>${A.deg[i]} (#${rankOf(A.deg, i)} in the world)</dd>
+        <dt>Countries served</dt><dd>${A.ncountries[i]}</dd><dt>Airlines</dt><dd>${A.nal[i]}</dd>
+        <dt>Betweenness</dt><dd>${(A.btw[i] * 100).toPrecision(2)}% (#${rankOf(A.btw, i)})</dd>
+        <dt>Within 2 flights</dt><dd>${F.fmt.format(reach[0] + reach[1])} airports</dd>
+        <dt>Within 3 flights</dt><dd>${F.fmt.format(reach[0] + reach[1] + reach[2])} airports</dd></dl>
+        <b>${state.airline >= 0 ? AL.name[state.airline] + ' routes' : 'Routes sold by the most airlines'}</b><ol>`;
+      for (const e of top) {
+        const o = P.a[e] === i ? P.b[e] : P.a[e];
+        html += `<li>${link(o)} <span class="muted">· ${P.n[e]} airline${P.n[e] > 1 ? 's' : ''}</span></li>`;
+      }
+      html += '</ol>';
+    } else if (state.airline >= 0) {
+      const j = state.airline, edges = airlineEdges[j];
+      const count = new Map();
+      edges.forEach(e => { count.set(P.a[e], (count.get(P.a[e]) || 0) + 1); count.set(P.b[e], (count.get(P.b[e]) || 0) + 1); });
+      const [hub, hubN] = [...count.entries()].sort((x, y) => y[1] - x[1])[0];
+      html += `<a class="clear" data-clear="airline">clear</a><h3>${AL.name[j]}</h3><p class="sub">${AL.country[j] || ''} · code ${AL.code[j]}</p>
+        <dl><dt>Routes (airport pairs)</dt><dd>${F.fmt.format(edges.length)}</dd><dt>Airports</dt><dd>${count.size}</dd>
+        <dt>Busiest airport</dt><dd>${link(hub)}</dd><dt>Routes touching it</dt><dd>${Math.round(100 * hubN / edges.length)}%</dd></dl>
+        <p class="muted">Includes routes the airline sells as a codeshare. Click an airport to see only its routes.</p>`;
+    } else {
+      html += `<h3>The world's air network</h3><p class="sub">3,419 airports · 19,239 routes · 2014</p>
+        <p>Hover an airport for details, click it to see its routes. Scroll or pinch to zoom, drag to pan.</p>
+        <p>Try <a data-airport="${F.indexOf.get('ANC')}">Anchorage</a>, the airport the most fastest connections pass
+        through, or the longest itinerary in the network:
+        <a data-path="LPS-YZG">Lopez → Salluit</a>.</p>
+        <p class="muted" style="font-size:13px">${F.N.source}</p>`;
+    }
+    info.innerHTML = html;
+  }
+
+  info.addEventListener('click', (ev) => {
+    const a = ev.target.closest('a'); if (!a) return;
+    if (a.dataset.airport) setAirport(+a.dataset.airport);
+    if (a.dataset.path) { const [x, y] = a.dataset.path.split('-'); findPath(F.indexOf.get(x), F.indexOf.get(y)); }
+    if (a.dataset.clear === 'path') { state.path = null; update(); }
+    if (a.dataset.clear === 'airport') setAirport(-1);
+    if (a.dataset.clear === 'airline') { select.value = -1; state.airline = -1; update(); }
+  });
+
+  // ---- state changes ----------------------------------------------------------------
+  function update(zoomTo) {
+    if (state.airport >= 0) dist = F.bfs(state.airport);
+    else if (state.path) dist = state.path.dist;
+    else dist = null;
+    renderInfo(); draw();
+    if (zoomTo) zoomToAirports(zoomTo);
+    const hash = state.path ? `from=${A.code[state.path.nodes[0]]}&to=${A.code[state.path.nodes.at(-1)]}`
+      : [state.airport >= 0 && `airport=${A.code[state.airport]}`, state.airline >= 0 && `airline=${AL.code[state.airline]}`].filter(Boolean).join('&');
+    history.replaceState(null, '', hash ? '#' + hash : location.pathname);
+  }
+  function setAirport(i) {
+    state.airport = i; state.path = null;
+    document.getElementById('airport').value = i >= 0 ? `${A.code[i]} · ${A.city[i]}, ${A.country[i]}` : '';
+    const nodes = i >= 0 ? [i, ...shownEdges().map(e => P.a[e] === i ? P.b[e] : P.a[e])] : 'reset';
+    update(nodes);
+  }
+  function findPath(s, d) {
+    if (s < 0 || d < 0 || s === d) return;
+    document.getElementById('from').value = `${A.code[s]} · ${A.city[s]}, ${A.country[s]}`;
+    document.getElementById('to').value = `${A.code[d]} · ${A.city[d]}, ${A.country[d]}`;
+    state.path = F.bestPath(s, d);
+    if (!state.path) { info.innerHTML = '<p>These two airports aren\'t connected by any sequence of flights.</p>'; return; }
+    state.airport = -1;
+    update(state.path.nodes);
+  }
+
+  document.getElementById('airport').addEventListener('change', (ev) => setAirport(F.parseAirport(ev.target.value)));
+  select.addEventListener('change', () => {
+    state.airline = +select.value; state.path = null;
+    const nodes = state.airline >= 0 ? airlineEdges[state.airline].flatMap(e => [P.a[e], P.b[e]]) : null;
+    update(nodes || (state.airport < 0 ? 'reset' : null));
+  });
+  document.getElementById('go').addEventListener('click', () =>
+    findPath(F.parseAirport(document.getElementById('from').value), F.parseAirport(document.getElementById('to').value)));
+  document.getElementById('to').addEventListener('change', () => document.getElementById('go').click());
+  const minair = document.getElementById('minair');
+  minair.addEventListener('input', () => { state.minAir = +minair.value; document.getElementById('minair-v').textContent = minair.value; draw(); });
+  document.querySelectorAll('#colorby button').forEach(b => b.addEventListener('click', () => {
+    state.color = b.dataset.mode;
+    document.querySelectorAll('#colorby button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    if (state.color === 'hops' && !dist) setAirport(F.indexOf.get('ORD')); else draw();
+  }));
+
+  // ---- zoom, hover, click -----------------------------------------------------------
+  const zoom = d3.zoom().scaleExtent([1, 24])
+    .on('zoom', (ev) => { t = ev.transform; draw(true); })
+    .on('end', () => draw());
+  const sel = d3.select(canvas).call(zoom).on('dblclick.zoom', null);
+  document.getElementById('zin').onclick = () => sel.transition().duration(300).call(zoom.scaleBy, 1.8);
+  document.getElementById('zout').onclick = () => sel.transition().duration(300).call(zoom.scaleBy, 1 / 1.8);
+  document.getElementById('zreset').onclick = () => sel.transition().duration(400).call(zoom.transform, d3.zoomIdentity);
+
+  function zoomToAirports(nodes) {
+    if (nodes === 'reset' || !nodes.length) return sel.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+    const xs = nodes.map(i => xy[i][0]), ys = nodes.map(i => xy[i][1]);
+    const [x0, x1, y0, y1] = [d3.min(xs), d3.max(xs), d3.min(ys), d3.max(ys)];
+    const k = Math.max(1, Math.min(12, 0.8 / Math.max((x1 - x0) / w, (y1 - y0) / h, 0.04)));
+    const target = d3.zoomIdentity.translate(w / 2, h / 2).scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+    sel.transition().duration(600).call(zoom.transform, target);
+  }
+
+  function airportAt(ev) {
+    const r = canvas.getBoundingClientRect();
+    const [x, y] = t.invert([ev.clientX - r.left, ev.clientY - r.top]);
+    const i = tree.find(x, y, 9 / t.k);
+    return { i, mx: ev.clientX - r.left, my: ev.clientY - r.top };
+  }
+  canvas.addEventListener('mousemove', (ev) => {
+    const { i, mx, my } = airportAt(ev);
+    if (i === undefined) { tip.style.display = 'none'; canvas.style.cursor = 'grab'; return; }
+    canvas.style.cursor = 'pointer';
+    let extra = '';
+    if (dist && dist[i] > 0) extra = `<br><b>${dist[i]} flight${dist[i] > 1 ? 's' : ''}</b> from ${A.code[state.airport >= 0 ? state.airport : state.path.nodes[0]]}`;
+    tip.innerHTML = `<b>${A.name[i]} (${A.code[i]})</b><br>${F.place(i)}<br>${A.deg[i]} nonstop destinations · ${A.nal[i]} airlines${extra}`;
+    tip.style.display = 'block';
+    const right = mx > w * 0.65;
+    tip.style.left = (right ? mx - 14 - tip.offsetWidth : mx + 14) + 'px';
+    tip.style.top = Math.min(my + 14, h - tip.offsetHeight - 8) + 'px';
+  });
+  canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  canvas.addEventListener('click', (ev) => {
+    if (ev.defaultPrevented) return;  // end of a drag
+    const { i } = airportAt(ev);
+    if (i !== undefined) setAirport(i);
+  });
+  window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { state.path = null; setAirport(-1); } });
+
+  // ---- start --------------------------------------------------------------------------
+  layout();
+  window.addEventListener('resize', () => { layout(); });
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (params.get('airline')) {
+    const j = AL.code.indexOf(params.get('airline'));
+    if (j >= 0) { select.value = j; state.airline = j; }
+  }
+  if (params.get('from') && params.get('to')) findPath(F.parseAirport(params.get('from')), F.parseAirport(params.get('to')));
+  else if (params.get('airport')) setAirport(F.parseAirport(params.get('airport')));
+  else update(state.airline >= 0 ? airlineEdges[state.airline].flatMap(e => [P.a[e], P.b[e]]) : null);
+})();
+</script>
+</body>
+</html>

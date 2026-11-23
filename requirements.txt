@@ -1,0 +1,6 @@
+matplotlib>=3.8
+numpy>=1.26
+pandas>=2.0
+networkx>=3.2
+geographiclib>=2.0
+PyQt5>=5.15  # only for the desktop explorer (python -m flightnet.app); PyQt6 or PySide6 work too

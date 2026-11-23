@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Four flights from almost anywhere · How the world's air network holds together</title>
+<meta name="description" content="A network analysis of [[overview.airports]] airports and [[overview.pairs]] nonstop routes: hubs, gateways, fragility and airline strategy.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="assets/network.js"></script>
+<script src="assets/common.js"></script>
+<style>
+  .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 32px; align-items: center; padding: 56px 0 32px; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; padding-top: 36px; } }
+  #globe { aspect-ratio: 1; border: 0; background: transparent; cursor: grab; max-width: 520px; justify-self: center; }
+  #globe:active { cursor: grabbing; }
+  #reach-map { aspect-ratio: 2 / 1; }
+  .hint { font-size: 13px; color: var(--text-muted); margin: 6px 0 0; text-align: center; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 18px 0 10px; }
+  .controls input { width: 260px; }
+</style>
+</head>
+<body>
+<nav class="top"><div class="inner">
+  <a class="brand" href="#top">Flight network</a>
+  <a href="#hubs" class="hide-sm">Hubs</a>
+  <a href="#small-world" class="hide-sm">Small world</a>
+  <a href="#gateways" class="hide-sm">Gateways</a>
+  <a href="#fragility" class="hide-sm">Fragility</a>
+  <a href="#airlines" class="hide-sm">Airlines</a>
+  <a href="explore.html">Explorer →</a>
+  <a href="https://github.com/saakshhh/flight-network">GitHub</a>
+</div></nav>
+
+<main class="wrap" id="top">
+  <header class="hero">
+    <div>
+      <p class="kicker">A network analysis of the world's air routes</p>
+      <h1>Four flights from almost anywhere</h1>
+      <p class="dek">[[overview.airports]] airports, [[overview.pairs]] nonstop routes, [[overview.airlines]] airlines.
+        Which airports hold the world's air network together, how few flights separate any two places, and what
+        breaks when the wrong airports close.</p>
+      <p class="byline">By Saksham Singh · Python, NetworkX, Matplotlib, D3 · Data: OpenFlights (2014 snapshot)</p>
+    </div>
+    <div>
+      <div class="mapbox" id="globe"><canvas></canvas></div>
+      <p class="hint">Routes sold by 3+ airlines. Drag to spin the globe.</p>
+    </div>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="num">[[overview.airports]]</div><div class="lbl">airports in [[overview.countries]] countries and territories</div></div>
+    <div class="tile"><div class="num">[[overview.pairs]]</div><div class="lbl">airport pairs with a nonstop flight ([[overview.routes]] airline routes)</div></div>
+    <div class="tile"><div class="num">[[reach.mean_flights]]</div><div class="lbl">flights on the fastest connection between two airports, on average</div></div>
+    <div class="tile"><div class="num">[[gateways.anc_degree]]</div><div class="lbl">destinations at Anchorage, the airport the most fastest connections pass through</div></div>
+  </div>
+
+  <section class="chapter" id="hubs">
+    <div class="prose">
+      <p class="num-label">1 · Hubs</p>
+      <h2>A handful of airports carry the network</h2>
+      <p>Most airports are small: the median one has nonstop flights to just <strong>[[hubs.median_degree]]</strong>
+        destinations, and [[hubs.small_share]]% have two or fewer. A few are enormous. [[hubs.top.0.city]] reaches
+        [[hubs.top.0.degree]] airports nonstop, [[hubs.top.1.city]] [[hubs.top.1.degree]], [[hubs.top.2.city]]
+        [[hubs.top.2.degree]].</p>
+      <p>The top 5% of airports ([[hubs.top5_count]] of them) are an endpoint of <strong>[[hubs.top5_pair_share]]%</strong>
+        of all routes. This is what network scientists call a <em>heavy-tailed</em> network: no "typical" airport,
+        just many spokes and a few hubs.</p>
+    </div>
+    <div class="figure"><img src="assets/img/hubs.png" alt="Concentration curve and ranking of the busiest hubs" loading="lazy"></div>
+  </section>
+
+  <section class="chapter" id="small-world">
+    <div class="prose">
+      <p class="num-label">2 · Small world</p>
+      <h2>[[reach.within.4]]% of airport pairs are four flights or fewer apart</h2>
+      <p>Hubs make the world small. Over every pair of the [[overview.main_airports]] connected airports, the fastest
+        connection takes <strong>[[reach.mean_flights]] flights</strong> on average; [[reach.within.3]]% of pairs need
+        three or fewer and [[reach.within.6]]% need six or fewer. From Chicago O'Hare, [[reach.from_ord.1]] airports are
+        one flight away, [[reach.from_ord.2]] are two, and [[reach.from_ord.3]] are within three.</p>
+      <p>Pick an airport to see how many flights everywhere else takes. Hover an airport for the itinerary.</p>
+    </div>
+    <div class="controls">
+      <div class="chips" id="reach-chips">
+        <button data-code="ORD">Chicago</button><button data-code="ANC">Anchorage</button>
+        <button data-code="SFJ">Kangerlussuaq</button><button data-code="[[reach.far_a.iata]]">Lopez Island</button>
+      </div>
+      <input type="search" id="reach-search" list="airport-list" placeholder="…or any airport: code or city">
+      <datalist id="airport-list"></datalist>
+    </div>
+    <div class="mapbox" id="reach-map"><canvas></canvas><div class="tooltip"></div></div>
+    <div class="bars" id="reach-bars"></div>
+    <div class="legend" id="reach-legend"></div>
+    <div class="prose">
+      <p class="callout">The two airports farthest apart are [[reach.far_a.name]] in Washington State and
+        [[reach.far_b.name]] in northern Quebec: <strong>[[reach.diameter]] flights</strong>
+        ([[reach.far_route]]), because both sit at the end of chains of tiny regional airports and the only big
+        airports on the way are [[reach.far_via]].</p>
+    </div>
+    <div class="figure"><img src="assets/img/reach.png" alt="Distribution of flights needed between airport pairs" loading="lazy"></div>
+  </section>
+
+  <section class="chapter" id="gateways">
+    <div class="prose">
+      <p class="num-label">3 · Gateways</p>
+      <h2>The most important airport isn't the busiest</h2>
+      <p>Counting destinations is one way to rank airports. <em>Betweenness</em> is another: the share of all fastest
+        connections in the network that pass through an airport. It measures how much an airport holds the network
+        together.</p>
+      <p>By betweenness, the world's #1 airport is <strong>Anchorage</strong>, with just [[gateways.anc_degree]]
+        destinations (#[[gateways.anc_degree_rank]] by size). Its score is [[gateways.anc_vs_ams]]× Amsterdam's,
+        even though Amsterdam has seven times the destinations. Anchorage is the only link between Alaska's bush
+        airports and the rest of the world, so every trip from one of them to anywhere else goes through it.
+        Kangerlussuaq in Greenland, with [[gateways.sfj_degree]] destinations, ranks #[[gateways.sfj_rank]] for the same
+        reason. [[gateways.top20_outside_top50_degree]] of the top 20 airports by betweenness aren't in the top 50
+        by destinations.</p>
+    </div>
+    <div class="figure"><img src="assets/img/gateways.png" alt="Betweenness against number of destinations" loading="lazy"></div>
+  </section>
+
+  <section class="chapter" id="fragility">
+    <div class="prose">
+      <p class="num-label">4 · Fragility</p>
+      <h2>Losing the gateways hurts more than losing the biggest hubs</h2>
+      <p>What if airports closed? Close <strong>[[fragility.k]] random airports</strong> and about
+        [[fragility.cut_random]] others lose their only links. Close the [[fragility.k]] with the
+        <strong>most destinations</strong> and [[fragility.cut_deg]] are cut off. Close the [[fragility.k]] with the
+        <strong>highest betweenness</strong> and [[fragility.cut_btw]] airports ([[fragility.cut_btw_share]]% of the
+        network) are stranded, [[fragility.cut_btw_alaska]] of them in Alaska.</p>
+      <p>The big hubs are heavily backed up: Frankfurt's passengers can reroute via Munich or Amsterdam. Gateways have
+        no backup. After 100 closures in betweenness order, only [[fragility.remaining_100.betweenness]]% of airports
+        are still connected, against [[fragility.remaining_100.degree]]% when the busiest close first and
+        [[fragility.remaining_100.random]]% at random.</p>
+    </div>
+    <div class="figure"><img src="assets/img/fragility.png" alt="Removal curves and a map of the airports cut off" loading="lazy"></div>
+  </section>
+
+  <section class="chapter" id="airlines">
+    <div class="prose">
+      <p class="num-label">5 · Airlines</p>
+      <h2>Two business models, visible from space</h2>
+      <p>Look at one airline at a time and two strategies appear. <strong>Hub-and-spoke</strong> carriers route almost
+        everything through home: [[airlines.QR.share]]% of [[airlines.QR.name]] routes start or end in Doha,
+        [[airlines.EK.share]]% of [[airlines.EK.name]] routes in Dubai, [[airlines.TK.share]]% of
+        [[airlines.TK.name]] routes in Istanbul. <strong>Point-to-point</strong> carriers criss-cross between many bases:
+        only [[airlines.FR.share]]% of the [[airlines.FR.routes]] [[airlines.FR.name]] routes touch its busiest airport,
+        London Stansted, and [[airlines.WN.share]]% of [[airlines.WN.name]] routes touch Chicago Midway.</p>
+      <p>Of the [[airlines.n]] airlines operating at least [[airlines.min_pairs]] routes, [[airlines.over_half]] send
+        more than half of their routes through one airport and [[airlines.under_quarter]] fewer than a quarter. US
+        network carriers sit in between ([[airlines.DL.name]]: [[airlines.DL.share]]% at Atlanta) because they run
+        several hubs.</p>
+    </div>
+    <div class="figure"><img src="assets/img/airline-maps.png" alt="Route maps of six airlines from hub-and-spoke to point-to-point" loading="lazy"></div>
+    <div class="figure"><img src="assets/img/airline-strategy.png" alt="Hub share against number of routes for every large airline" loading="lazy"></div>
+  </section>
+
+  <section class="chapter" id="regions">
+    <div class="prose">
+      <p class="num-label">6 · Regions</p>
+      <h2>The network draws its own map</h2>
+      <p>Community detection groups airports that mostly connect to each other, without being told anything about
+        geography. It finds [[regions.n]] groups, [[regions.big]] of them with 100+ airports, and they mostly match
+        continents. The exceptions are telling: India, Iran and the Arabian Peninsula form one region around the Gulf
+        hubs; Russia and Central Asia form their own; Alaska, Northern Canada and Greenland each form a separate
+        world, tied to everything else through one or two gateways. That is the same structure that makes those
+        gateways so important in chapter 3.</p>
+    </div>
+    <div class="figure"><img src="assets/img/regions.png" alt="Map of airports colored by network community" loading="lazy"></div>
+  </section>
+
+  <section class="chapter">
+    <h2>What it adds up to</h2>
+    <div class="takeaways">
+      <div><h3>Hubs shrink the world</h3><p>A few hundred hub airports put [[reach.within.4]]% of all airport pairs
+        within four flights of each other.</p></div>
+      <div><h3>Size isn't importance</h3><p>Small gateways like Anchorage hold remote regions on the network.
+        Rankings by traffic miss them; betweenness finds them.</p></div>
+      <div><h3>Redundancy is uneven</h3><p>Big hubs back each other up. Gateways don't, so they are where the
+        network is fragile.</p></div>
+    </div>
+    <div class="cta">
+      <div><h3>Explore the network yourself</h3>
+        <p>Any airport's routes, any airline's network, and the fastest itinerary between two airports.</p></div>
+      <a class="button" href="explore.html">Open the explorer →</a>
+    </div>
+  </section>
+
+  <section class="chapter methods" id="methods">
+    <h2>Data and methods</h2>
+    <h3>Data</h3>
+    <ul>
+      <li><a href="https://openflights.org/data">OpenFlights</a> route database (<a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL</a>):
+        [[overview.routes]] airline routes, merged into [[overview.pairs]] airport pairs. It is a <strong>2014 snapshot</strong>
+        and has no flight frequencies or seat counts, so a route counts once whether it runs hourly or weekly.</li>
+      <li>Airport locations from OpenFlights, with continents and the airports OpenFlights lacks filled in from
+        <a href="https://ourairports.com/data/">OurAirports</a> (public domain). Country outlines: <a href="https://www.naturalearthdata.com/">Natural Earth</a>.</li>
+      <li>OpenFlights reuses two-letter airline codes (VY is both Vueling and Formosa Airlines), so the build names
+        each code by the home country its routes actually serve, and leaves unclear ones unnamed rather than guessing.</li>
+    </ul>
+    <h3>Network measures</h3>
+    <ul>
+      <li>Airports are nodes; an edge joins two airports when any airline flies between them nonstop.</li>
+      <li><strong>Destinations</strong> = degree. <strong>Flights needed</strong> = shortest-path length, over all
+        pairs in the connected network ([[overview.main_share]]% of airports; the rest are isolated island networks).</li>
+      <li><strong>Betweenness</strong> = share of all shortest paths through an airport (NetworkX, exact).</li>
+      <li><strong>Fragility</strong>: remove airports in a fixed order and measure the largest connected group left;
+        random order averaged over 20 runs.</li>
+      <li><strong>Regions</strong>: Louvain community detection. <strong>Hub share</strong>: share of an airline's own
+        (non-codeshare) routes that touch its busiest airport.</li>
+    </ul>
+    <p>Every number on this page is computed from the data by <code>flightnet/stats.py</code> when the site is built.</p>
+  </section>
+</main>
+
+<footer><div class="wrap">
+  Built by <a href="https://saakshhh.github.io">Saksham Singh</a> · Code on
+  <a href="https://github.com/saakshhh/flight-network">GitHub</a> · Started as a homework assignment in Purdue's
+  CS 43900 Interactive Data Visualization, then rebuilt from the original public data.
+</div></footer>
+
+<script>
+(function () {
+  const F = window.Flight, A = F.A, P = F.P;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function setupCanvas(box) {
+    const canvas = box.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    function resize() {
+      const r = box.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return [r.width, r.height];
+    }
+    return { canvas, ctx, resize };
+  }
+
+  // ---- hero globe ------------------------------------------------------------------
+  (function globe() {
+    const box = document.getElementById('globe');
+    const { canvas, ctx, resize } = setupCanvas(box);
+    const projection = d3.geoOrthographic().rotate([20, -30]).clipAngle(90);
+    const path = d3.geoPath(projection, ctx);
+    const routes = [];
+    for (let e = 0; e < F.m; e++) if (P.n[e] >= 3) routes.push(e);
+    routes.sort((x, y) => P.n[x] - P.n[y]);
+    const lines = routes.map(e => ({ type: 'LineString',
+      coordinates: [[A.lon[P.a[e]], A.lat[P.a[e]]], [A.lon[P.b[e]], A.lat[P.b[e]]]] }));
+    const hubs = [];
+    for (let i = 0; i < F.n; i++) if (A.deg[i] >= 25) hubs.push(i);
+    let w, h, visible = true, dragging = false;
+
+    function size() { [w, h] = resize(); projection.fitExtent([[6, 6], [w - 6, h - 6]], { type: 'Sphere' }); draw(); }
+    function draw() {
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath(); path({ type: 'Sphere' }); ctx.fillStyle = F.css('--surface-2'); ctx.fill();
+      ctx.beginPath(); path(F.N.world); ctx.fillStyle = F.css('--land'); ctx.fill();
+      ctx.strokeStyle = F.css('--coast'); ctx.lineWidth = 0.4; ctx.stroke();
+      const rgb = F.css('--route');
+      lines.forEach((line, k) => {
+        const nAir = P.n[routes[k]];
+        ctx.beginPath(); path(line);
+        ctx.strokeStyle = `rgba(${rgb},${Math.min(0.25 + nAir * 0.06, 0.85)})`;
+        ctx.lineWidth = 0.4 + Math.min(nAir, 10) * 0.12; ctx.stroke();
+      });
+      const center = projection.invert([w / 2, h / 2]);
+      for (const i of hubs) {
+        const p = [A.lon[i], A.lat[i]];
+        if (d3.geoDistance(p, center) > Math.PI / 2) continue;
+        const [x, y] = projection(p);
+        ctx.beginPath(); ctx.arc(x, y, F.radius(A.deg[i]) * 0.8, 0, 2 * Math.PI);
+        ctx.fillStyle = F.N.continentColors[A.cont[i]] || '#888'; ctx.fill();
+      }
+      ctx.beginPath(); path({ type: 'Sphere' }); ctx.strokeStyle = F.css('--coast'); ctx.lineWidth = 1; ctx.stroke();
+    }
+    d3.select(canvas).call(d3.drag()
+      .on('start', () => { dragging = true; })
+      .on('drag', (event) => {
+        const [l, p] = projection.rotate(), k = 75 / projection.scale();
+        projection.rotate([l + event.dx * k, Math.max(-80, Math.min(80, p - event.dy * k))]); draw();
+      })
+      .on('end', () => { dragging = false; }));
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(box);
+    let last = 0;
+    function tick(t) {
+      if (visible && !dragging && !reduced && t - last > 33) {
+        const [l, p] = projection.rotate(); projection.rotate([l + 0.12, p]); draw(); last = t;
+      }
+      requestAnimationFrame(tick);
+    }
+    size(); window.addEventListener('resize', size); requestAnimationFrame(tick);
+  })();
+
+  // ---- reach map -------------------------------------------------------------------
+  (function reach() {
+    const box = document.getElementById('reach-map');
+    const { canvas, ctx, resize } = setupCanvas(box);
+    const tip = box.querySelector('.tooltip');
+    const projection = d3.geoEqualEarth();
+    const path = d3.geoPath(projection, ctx);
+    let w, h, src = F.indexOf.get('ORD'), dist = F.bfs(src), xy = [], tree, hoverPath = null;
+    F.airportOptions(document.getElementById('airport-list'));
+
+    const legend = document.getElementById('reach-legend');
+    legend.innerHTML = ['origin', '1 flight', '2', '3', '4', '5+', 'not connected'].map((t, k) =>
+      `<span><i style="background:${F.hopColor(k === 6 ? -1 : k)}"></i>${t}</span>`).join('');
+
+    function size() {
+      [w, h] = resize();
+      projection.fitExtent([[4, 4], [w - 4, h - 4]], F.frame);
+      xy = A.lon.map((lon, i) => projection([lon, A.lat[i]]));
+      tree = d3.quadtree(d3.range(F.n), i => xy[i][0], i => xy[i][1]);
+      draw();
+    }
+    function draw() {
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath(); path(F.N.world); ctx.fillStyle = F.css('--land'); ctx.fill();
+      ctx.strokeStyle = F.css('--coast'); ctx.lineWidth = 0.4; ctx.stroke();
+      if (hoverPath) {
+        ctx.beginPath();
+        hoverPath.edges.forEach(e => path({ type: 'LineString', coordinates: [[A.lon[P.a[e]], A.lat[P.a[e]]], [A.lon[P.b[e]], A.lat[P.b[e]]]] }));
+        ctx.strokeStyle = F.css('--highlight'); ctx.lineWidth = 2; ctx.stroke();
+      }
+      const order = d3.range(F.n).sort((x, y) => (dist[y] < 0 ? 99 : dist[y]) - (dist[x] < 0 ? 99 : dist[x]));
+      for (const i of order) {
+        if (i === src) continue;
+        ctx.beginPath(); ctx.arc(xy[i][0], xy[i][1], Math.max(1.6, F.radius(A.deg[i]) * 0.7), 0, 2 * Math.PI);
+        ctx.fillStyle = F.hopColor(dist[i]); ctx.fill();
+      }
+      ctx.beginPath(); ctx.arc(xy[src][0], xy[src][1], 6, 0, 2 * Math.PI);
+      ctx.fillStyle = F.css('--highlight'); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    function setSource(i) {
+      if (i < 0) return;
+      src = i; dist = F.bfs(src); hoverPath = null;
+      document.querySelectorAll('#reach-chips button').forEach(b => b.setAttribute('aria-pressed', b.dataset.code === A.code[i]));
+      const counts = [0, 0, 0, 0, 0]; let unreachable = 0;
+      for (let k = 0; k < F.n; k++) { if (k === src) continue; if (dist[k] < 0) unreachable++; else counts[Math.min(dist[k], 5) - 1]++; }
+      const names = ['1 flight', '2 flights', '3 flights', '4 flights', '5 or more'];
+      document.getElementById('reach-bars').innerHTML = counts.map((c, k) =>
+        `<div><b>${F.fmt.format(c)}</b>${names[k]}</div>`).join('');
+      draw();
+    }
+    document.querySelectorAll('#reach-chips button').forEach(b => b.addEventListener('click', () => setSource(F.indexOf.get(b.dataset.code))));
+    const search = document.getElementById('reach-search');
+    search.addEventListener('change', () => setSource(F.parseAirport(search.value)));
+
+    canvas.addEventListener('mousemove', (ev) => {
+      const r = canvas.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+      const i = tree.find(x, y, 10);
+      if (i === undefined || i === src) { tip.style.display = 'none'; if (hoverPath) { hoverPath = null; draw(); } return; }
+      hoverPath = dist[i] > 0 ? F.bestPath(src, i) : null;
+      const route = hoverPath ? hoverPath.nodes.map(k => A.code[k]).join(' → ') : 'not connected';
+      tip.innerHTML = `<b>${A.name[i]}</b><br>${F.place(i)}<br>${dist[i] > 0 ? `<b>${dist[i]} flight${dist[i] > 1 ? 's' : ''}</b> from ${A.code[src]}: ` : ''}${route}`;
+      tip.style.display = 'block';
+      tip.style.left = Math.min(x + 14, r.width - 300) + 'px'; tip.style.top = (y + 14) + 'px';
+      draw();
+    });
+    canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; hoverPath = null; draw(); });
+    canvas.addEventListener('click', (ev) => {
+      const r = canvas.getBoundingClientRect(), i = tree.find(ev.clientX - r.left, ev.clientY - r.top, 10);
+      if (i !== undefined) setSource(i);
+    });
+    size(); setSource(src); window.addEventListener('resize', size);
+  })();
+})();
+</script>
+</body>
+</html>
